@@ -85,6 +85,8 @@ def detect_gpu_memory() -> dict:
             ["nvidia-smi", "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="ignore",
             timeout=5,
         )
         if result.returncode != 0:
@@ -132,6 +134,8 @@ def detect_gpu_encoding_support(ffmpeg_exe: str, gpu_id: int | None = None) -> s
             [ffmpeg_exe, "-hide_banner", "-encoders"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="ignore",
             timeout=5,
         )
         encoders_text = (result.stdout or "") + "\n" + (result.stderr or "")
@@ -183,6 +187,8 @@ def clip_with_ffmpeg_parallel(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="ignore",
             timeout=300,
             env=env,
         )
@@ -330,7 +336,7 @@ def merge_segments_with_concat(
         output_path
     ]
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore")
     if result.returncode != 0:
         print(f"[錯誤] 合併失敗: {result.stderr[-300:]}")
         return False
