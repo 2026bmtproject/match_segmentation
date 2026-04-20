@@ -12,7 +12,7 @@ brepro.py
                 Start_Frame, End_Frame, Start_Sec, End_Sec, Duration_Sec
 
 使用方式:
-        python brepro.py test2.mp4 output.csv
+        python brepro.py test2.mp4 r.csv
         python brepro.py
                 (若未給參數，會自動選目前目錄第一個 .mp4，
                  並輸出為 <影片名>_brepro_segments.csv)
@@ -27,8 +27,8 @@ brepro.py
         7) 輸出精簡欄位 CSV
 
 可調整參數:
-        - MERGE_GAP_FRAMES (預設 2)
-            片段間 gap 小於此值時合併。值越大，片段越容易被合併。
+        - --merge-min-ratio (0~1, 預設 0.5)
+            兩片段之間 gap 內低 diff 幀比例門檻。比例 >= 門檻時合併。
 
         - MIN_SEGMENT_SECONDS (預設 0.5)
             最短保留片段秒數。值越大，短片段會被更多地濾掉。
@@ -58,7 +58,7 @@ import cv2
 import numpy as np
 
 
-MERGE_GAP_FRAMES = 2
+DEFAULT_MERGE_MIN_RATIO = 0.5
 MIN_SEGMENT_SECONDS = 0.5
 DEFAULT_AVG_THR_SCALE = 0.7
 COMPARE_SIZE = (128, 72)
@@ -240,7 +240,7 @@ def compute_frame_diff(video_path: str) -> tuple[np.ndarray, np.ndarray, float, 
     diffs = [0]
     times = [0.0]
 
-    bar = SmoothProgress("掃描 FrameDiff(MAD)", total_frames)
+    bar = SmoothProgress("step 1: 掃描 FrameDiff(MAD)", total_frames)
     bar.update(1, force=True)
 
     frame_no = 0
@@ -285,15 +285,32 @@ def build_segments_from_mask(is_low: np.ndarray) -> list[tuple[int, int]]:
     return segments
 
 
-def merge_close_segments(segments: list[tuple[int, int]], gap_frames: int) -> list[tuple[int, int]]:
+def merge_close_segments(
+    segments: list[tuple[int, int]],
+    is_low: np.ndarray,
+    min_ratio: float,
+) -> list[tuple[int, int]]:
     if not segments:
         return []
 
+    min_ratio = clamp(min_ratio, 0.0, 1.0)
     merged = [segments[0]]
+
     for start_frame, end_frame in segments[1:]:
         prev_start, prev_end = merged[-1]
         gap = start_frame - prev_end - 1
-        if gap < gap_frames:
+
+        if gap <= 0:
+            merged[-1] = (prev_start, max(prev_end, end_frame))
+            continue
+
+        gap_start = prev_end + 1
+        gap_end_exclusive = start_frame
+        gap_mask = is_low[gap_start:gap_end_exclusive]
+        low_count = int(np.sum(gap_mask))
+        low_ratio = low_count / max(gap, 1)
+
+        if low_ratio >= min_ratio:
             merged[-1] = (prev_start, max(prev_end, end_frame))
         else:
             merged.append((start_frame, end_frame))
@@ -363,7 +380,7 @@ def load_required_gray_frames(
         raise RuntimeError(f"無法開啟影片: {video_path}")
 
     total_to_scan = max_frame_index + 1
-    bar = SmoothProgress("擷取代表幀", total_to_scan)
+    bar = SmoothProgress("step 2: 擷取代表幀", total_to_scan)
     bar.update(0, force=True)
 
     frame_cache: dict[int, np.ndarray] = {}
@@ -427,7 +444,7 @@ def compute_cross_segment_scores(
 
     total_pairs = seg_count * (seg_count - 1) // 2
     done_pairs = 0
-    bar = SmoothProgress("跨片段比對(MAD)", total_pairs)
+    bar = SmoothProgress("step 3: 跨片段比對(MAD)", total_pairs)
     bar.update(0, force=True)
 
     for i in range(seg_count):
@@ -519,6 +536,13 @@ def parse_args() -> argparse.Namespace:
         help="Cross_Diff_Avg 門檻百分比強度(0~1，越小越嚴格)",
     )
     parser.add_argument(
+        "--merge-min-ratio",
+        dest="merge_min_ratio",
+        type=float,
+        default=DEFAULT_MERGE_MIN_RATIO,
+        help="片段 gap 內低 diff 幀比例門檻(0~1，比例 >= 門檻則合併)",
+    )
+    parser.add_argument(
         "--avg-thr-pct",
         dest="avg_thr_pct",
         type=float,
@@ -589,7 +613,7 @@ def main() -> None:
         is_low[0] = False
 
     raw_segments = build_segments_from_mask(is_low)
-    merged_segments = merge_close_segments(raw_segments, MERGE_GAP_FRAMES)
+    merged_segments = merge_close_segments(raw_segments, is_low, args.merge_min_ratio)
     candidate_segments = filter_short_segments(merged_segments, fps, MIN_SEGMENT_SECONDS)
 
     pairs, required_frames = collect_required_frames(candidate_segments)
@@ -625,6 +649,7 @@ def main() -> None:
     print(f"低於分界: {low_frames} ({low_frames / max(scores.size, 1) * 100:.1f}%)")
     print(f"原始片段數: {len(raw_segments)}")
     print(f"合併後片段數: {len(merged_segments)}")
+    print(f"合併門檻(gap低diff比例): {clamp(args.merge_min_ratio, 0.0, 1.0):.2f}")
     print(f"候選片段數(最短 {MIN_SEGMENT_SECONDS:.1f} 秒): {len(candidate_segments)}")
     if cross_avgs:
         print(f"Cross_Diff_Avg 最小值: {min_avg}")
