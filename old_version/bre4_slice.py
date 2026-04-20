@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-import bre4
+import old_version.bre4 as bre4
 
 # 降低 OpenCV/FFmpeg 在有破損 GOP 時輸出的非致命解碼警告噪音
 os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "8")

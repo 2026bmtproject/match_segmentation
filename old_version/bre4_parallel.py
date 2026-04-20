@@ -72,7 +72,7 @@ MANUAL_THRESHOLD = None
 # ─────────────────────────────────────────────
 
 # 從 bre4.py 匯入共用函式
-import bre4
+import old_version.bre4 as bre4
 
 
 def detect_gpu_memory() -> dict:

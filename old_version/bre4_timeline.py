@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-import bre4
+import old_version.bre4 as bre4
 
 
 def resolve_inputs() -> tuple[str, str, str]:
