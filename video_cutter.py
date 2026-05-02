@@ -418,7 +418,7 @@ CSV 欄位（必要：Start_Sec, End_Sec）：
 
 範例：
   分段輸出：
-    python video_cutter.py -v input.mp4 -c clips.csv -m separate -o ./output_clips
+    python video_cutter.py -v test2.mp4 -c r.csv -m separate -o ./output_clips
 
   合併輸出：
     python video_cutter.py -v input.mp4 -c clips.csv -m merge -o merged.mp4
