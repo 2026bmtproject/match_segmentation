@@ -5,7 +5,7 @@ Scoreboard Reader via Gemini Flash 2.5
 Reads badminton scoreboards from screenshots or video composites using Google Gemini API.
 
 Usage:
-    # Set API key (PowerShell)
+    # Set API key (PowerShell) (https://aistudio.google.com/app/api-keys)
     $env:GEMINI_API_KEY = "your-key-here"
 
     # Single video
