@@ -3,7 +3,7 @@
 FFmpeg 影片剪輯工具
 依照 CSV 檔案剪輯 MP4 影片，支援分段輸出或合併輸出
 python video_cutter.py -v test2.mp4 -c r.csv -m merge -o merged.mp4
-python video_cutter.py -v test2.mp4 -c r.csv -m separate -o ./output_clips
+python video_cutter.py -v MK_vs_CT_2019.mp4 -c MK_vs_CT_2019.csv -m separate -o ./output_clips
 """
 
 import subprocess

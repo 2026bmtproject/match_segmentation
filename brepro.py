@@ -12,10 +12,16 @@ brepro.py
                 Start_Frame, End_Frame, Start_Sec, End_Sec, Duration_Sec
 
 使用方式:
-        python brepro.py test2.mp4 r.csv
+        python brepro.py MK_vs_CT_2019.mp4 MK_vs_CT_2019.csv
         python brepro.py
                 (若未給參數，會自動選目前目錄第一個 .mp4，
                  並輸出為 <影片名>_brepro_segments.csv)
+
+        排除重跑模式:
+        python brepro.py test2.mp4 r2.csv --exclude-csv r.csv
+                (讀取上一輪輸出的 r.csv，略過其中所有 frame 後，
+                 在剩餘 frame 中重新尋找穩定片段。適用於使用者
+                 不滿意上一輪挑出的片段、想在其餘部分重找的情境。)
 
 程式流程:
         1) 逐幀計算 FrameDiff(MAD)
@@ -42,6 +48,11 @@ brepro.py
         - --avg-thr-pct (例如 0.05)
             直接指定固定放寬百分比，提供後會覆蓋動態比例策略。
 
+        - --frame-step (預設 3)
+            FrameDiff(MAD) 階段的跳幀取樣間隔。每 N 幀才實際解碼/比對一次，
+            被跳過的幀沿用該區間算出的 MAD（區段邊界精度約 ±N 幀）。
+            值越大越快，但邊界越粗；設 1 表示逐幀（不跳幀）。
+
 進度顯示:
         使用 SmoothProgress 類別，採用 EWMA 平滑速率估計，使 ETA 更穩定。
 """
@@ -61,6 +72,7 @@ import numpy as np
 DEFAULT_MERGE_MIN_RATIO = 0.5
 MIN_SEGMENT_SECONDS = 0.5
 DEFAULT_AVG_THR_SCALE = 0.7
+DEFAULT_FRAME_STEP = 3
 COMPARE_SIZE = (128, 72)
 
 
@@ -154,6 +166,36 @@ def pick_default_video() -> str:
     return videos[0]
 
 
+def load_excluded_frames(csv_path: str) -> set[int]:
+    """讀取先前輸出的片段 CSV，回傳所有被涵蓋的 frame 索引集合。
+
+    用於「排除重跑」模式：使用者若不滿意上一輪挑出的片段，可把該 CSV
+    當作排除清單，程式會略過這些 frame 後，在剩餘 frame 中重新尋找穩定片段。
+    CSV 需含 Start_Frame / End_Frame 欄位（即本程式的標準輸出格式）。
+    """
+    if not os.path.isfile(csv_path):
+        raise FileNotFoundError(f"找不到排除用 CSV: {csv_path}")
+
+    excluded: set[int] = set()
+    with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None or "Start_Frame" not in reader.fieldnames or "End_Frame" not in reader.fieldnames:
+            raise ValueError("排除用 CSV 缺少 Start_Frame / End_Frame 欄位")
+
+        for row in reader:
+            try:
+                start_frame = int(float(row["Start_Frame"]))
+                end_frame = int(float(row["End_Frame"]))
+            except (TypeError, ValueError):
+                continue
+
+            if end_frame < start_frame:
+                start_frame, end_frame = end_frame, start_frame
+            excluded.update(range(start_frame, end_frame + 1))
+
+    return excluded
+
+
 def find_threshold_gmm(scores: np.ndarray) -> float:
     if scores.size == 0:
         raise ValueError("scores 為空")
@@ -219,7 +261,19 @@ def find_threshold_gmm(scores: np.ndarray) -> float:
     return float(10.0**thresh_log)
 
 
-def compute_frame_diff(video_path: str) -> tuple[np.ndarray, np.ndarray, float, int]:
+def compute_frame_diff(
+    video_path: str,
+    frame_step: int = 1,
+) -> tuple[np.ndarray, np.ndarray, float, int]:
+    """逐幀計算 FrameDiff(MAD)，可用 frame_step 做跳幀取樣以加速。
+
+    跳幀取樣: 每 frame_step 幀才實際解碼(retrieve)並比對一次 MAD，被跳過
+    的幀以 cap.grab() 快速掠過(不做色彩轉換/複製)，並沿用該區間算出的 MAD
+    分數回填。輸出陣列仍以「真實幀號」為索引，因此後續流程(片段、秒數、
+    CSV、排除重跑)完全不需改動，僅區段邊界精度約 ±frame_step 幀。
+    """
+    step = max(int(frame_step), 1)
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"無法開啟影片: {video_path}")
@@ -244,23 +298,41 @@ def compute_frame_diff(video_path: str) -> tuple[np.ndarray, np.ndarray, float, 
     bar.update(1, force=True)
 
     frame_no = 0
+    last_decode_idx = 0
     while True:
-        ok, frame = cap.read()
-        if not ok:
+        grabbed = cap.grab()
+        if not grabbed:
             break
 
         frame_no += 1
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        diff = cv2.absdiff(prev_gray, gray)
-        score = round_to_int(float(np.mean(diff)))
-
-        diffs.append(score)
+        diffs.append(0)  # 先佔位，待此區間解碼後回填
         times.append(frame_no / fps)
-        prev_gray = gray
+
+        if frame_no % step == 0:
+            ok, frame = cap.retrieve()
+            if not ok:
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            diff = cv2.absdiff(prev_gray, gray)
+            score = round_to_int(float(np.mean(diff)))
+            prev_gray = gray
+
+            # 把本區間(上次解碼之後到這次解碼)所有被跳過的幀一併填上此分數
+            for k in range(last_decode_idx + 1, frame_no + 1):
+                diffs[k] = score
+            last_decode_idx = frame_no
 
         bar.update(frame_no + 1)
 
     cap.release()
+
+    # 結尾未滿一個 step 的殘餘幀，沿用最後一次算出的分數
+    if last_decode_idx < frame_no:
+        tail_score = diffs[last_decode_idx]
+        for k in range(last_decode_idx + 1, frame_no + 1):
+            diffs[k] = tail_score
+
     processed = frame_no + 1
     bar.update(processed, force=True)
 
@@ -549,6 +621,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="直接指定門檻百分比（例如 0.05 代表 +5%%）",
     )
+    parser.add_argument(
+        "--exclude-csv",
+        dest="exclude_csv",
+        default=None,
+        help="排除重跑模式：指定先前輸出的片段 CSV，程式會略過其中所有 frame 後在剩餘 frame 重新尋找片段",
+    )
+    parser.add_argument(
+        "--frame-step",
+        dest="frame_step",
+        type=int,
+        default=DEFAULT_FRAME_STEP,
+        help="FrameDiff(MAD) 跳幀取樣間隔(預設 3；每 N 幀解碼比對一次，設 1 表示逐幀)",
+    )
     return parser.parse_args()
 
 
@@ -604,13 +689,31 @@ def main() -> None:
     print("=" * 72)
     print(f"影片:  {video_path}")
     print(f"輸出: {output_csv}")
+    frame_step = max(int(args.frame_step), 1)
+    if frame_step > 1:
+        print(f"跳幀取樣: 每 {frame_step} 幀解碼比對一次")
+    else:
+        print("跳幀取樣: 逐幀（不跳幀）")
 
-    scores, times, fps, processed_frames = compute_frame_diff(video_path)
+    excluded_frames: set[int] = set()
+    if args.exclude_csv:
+        excluded_frames = load_excluded_frames(args.exclude_csv)
+        print(f"排除重跑: {args.exclude_csv}（排除 {len(excluded_frames)} 個 frame）")
 
-    threshold = find_threshold_gmm(scores)
+    scores, times, fps, processed_frames = compute_frame_diff(video_path, frame_step)
+
+    excluded_mask = np.zeros(scores.size, dtype=bool)
+    if excluded_frames:
+        valid_excluded = [f for f in excluded_frames if 0 <= f < scores.size]
+        excluded_mask[valid_excluded] = True
+
+    # 僅用未被排除的 frame 計算 GMM 門檻，讓重跑真正只在剩餘 frame 中尋找穩定片段
+    threshold = find_threshold_gmm(scores[~excluded_mask])
     is_low = scores < threshold
     if is_low.size > 0:
         is_low[0] = False
+    # 把被排除的 frame 標為非低動態，使其無法形成片段、也無法作為合併的橋接
+    is_low[excluded_mask] = False
 
     raw_segments = build_segments_from_mask(is_low)
     merged_segments = merge_close_segments(raw_segments, is_low, args.merge_min_ratio)
@@ -646,6 +749,8 @@ def main() -> None:
     print(f"總幀數: {processed_frames}")
     print(f"總時長: {duration_sec / 60:.1f} 分鐘")
     print(f"GMM 分界值: {threshold:.2f}")
+    if excluded_frames:
+        print(f"排除重跑略過 frame 數: {int(np.sum(excluded_mask))}")
     print(f"低於分界: {low_frames} ({low_frames / max(scores.size, 1) * 100:.1f}%)")
     print(f"原始片段數: {len(raw_segments)}")
     print(f"合併後片段數: {len(merged_segments)}")

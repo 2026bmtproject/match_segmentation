@@ -12,7 +12,7 @@ Usage:
     python score_reader.py match.mp4
 
     # Batch folder of videos
-    python score_reader.py clips/ -o results.csv
+    python score_reader.py MK_vs_CT_2019/ -o results.csv
 
     # Single image still works
     python score_reader.py screenshot.png

@@ -1,0 +1,125 @@
+{
+  "name": "MK_vs_CT_2019",
+  "fps": 25.0,
+  "players": {
+    "A": "MK",
+    "B": "CT"
+  },
+  "court_switch": {
+    "1": {
+      "bottom": "A",
+      "top": "B"
+    },
+    "2": {
+      "bottom": "B",
+      "top": "A"
+    },
+    "3": {
+      "bottom": "A",
+      "top": "B"
+    }
+  },
+  "final_score": {
+    "sets": [
+      [
+        21,
+        15
+      ],
+      [
+        17,
+        21
+      ],
+      [
+        21,
+        18
+      ]
+    ],
+    "sets_won": {
+      "A": 2,
+      "B": 1
+    },
+    "winner": "A"
+  },
+  "court_calibration": {
+    "image_points": [
+      [
+        613.5,
+        462.0
+      ],
+      [
+        1297.5,
+        463.5
+      ],
+      [
+        463.5,
+        1003.5
+      ],
+      [
+        1453.5,
+        1000.5
+      ],
+      [
+        665.3972,
+        462.1138
+      ],
+      [
+        1246.2348,
+        463.3876
+      ],
+      [
+        538.8204,
+        1003.2718
+      ],
+      [
+        1379.5035,
+        1000.7242
+      ],
+      [
+        572.6147,
+        609.596
+      ],
+      [
+        1340.1125,
+        610.1853
+      ],
+      [
+        529.6366,
+        764.7467
+      ],
+      [
+        1384.8319,
+        764.1231
+      ],
+      [
+        957.79,
+        609.8917
+      ],
+      [
+        959.0053,
+        764.4336
+      ],
+      [
+        552.2647,
+        683.0596
+      ],
+      [
+        1361.2965,
+        683.1072
+      ]
+    ],
+    "outer_corners_order": [
+      "top_left",
+      "top_right",
+      "bottom_left",
+      "bottom_right"
+    ],
+    "note": "球場座標 nx:0=左1=右, ny:0=遠端(top)1=近端(bottom)；網約在 ny=0.5"
+  },
+  "data_sources": {
+    "ball_track / hit_pos": "event/*.csv",
+    "player positions": "skeleton/*.csv (ankle midpoint) + court_switch",
+    "scores / winner": "score.csv (+ 終分由領先方推得)",
+    "court coords": "court.csv homography",
+    "shot type": "setN.csv (frame_num→type only)"
+  }
+}
